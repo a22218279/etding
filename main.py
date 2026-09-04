@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 beijing_tz = pytz.timezone('Asia/Shanghai')
 
 # 配置检查间隔（秒）
-CHECK_INTERVAL = 300  # 5分钟检查一次
+CHECK_INTERVAL = 120  # 2分钟检查一次
 
 # 服务状态
 service_status = {

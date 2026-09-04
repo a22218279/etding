@@ -592,9 +592,9 @@ async def process_wake_request():
             logger.error("没有找到有效的邮箱配置")
             return
         
-        if not os.getenv('WEIXIN_WEBHOOK'):
-            logger.error("未配置微信Webhook")
-            return
+        # if not os.getenv('WEIXIN_WEBHOOK'):
+        #     logger.error("未配置微信Webhook")
+        #     return
         
         # 检查Gmail邮箱
         for gmail_config in configs['gmail']:

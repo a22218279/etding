@@ -160,7 +160,7 @@ class EmailMonitor:
             logger.error(f"连接邮箱失败: {str(e)}")
             return False
 
-    def send_to_dingtalk(self, subject, sender, content, received_time):
+    def send_to_dingtalk(self, subject, sender, content, received_time, receiver):
         if not self.dingtalk_webhook:
             return
         try:
@@ -177,6 +177,7 @@ class EmailMonitor:
                     f"━━━━━━━━━━━━━━━\n"
                     f"📧 邮箱: {self.email_addr}\n"
                     f"📬 发件人: {sender}\n"
+                    f"📬 转发人: {receiver}\n"
                     f"📋 主题: {subject}\n"
                     f"🔑 验证码: {code}\n"
                     f"⏰ 时间: {time_str}\n"
@@ -188,6 +189,7 @@ class EmailMonitor:
                     f"━━━━━━━━━━━━━━━\n"
                     f"📧 邮箱: {self.email_addr}\n"
                     f"📬 发件人: {sender}\n"
+                    f"📬 转发人: {receiver}\n"
                     f"📋 主题: {subject}\n"
                     f"📝 内容: {content[:200]}\n"
                     f"⏰ 时间: {time_str}\n"
@@ -408,11 +410,12 @@ class EmailMonitor:
 
                     subject = self.decode_subject(email_message['subject'])
                     sender = email_message['from']
+                    receiver = email_message.get('to') or ''
                     content = self.get_email_content(email_message)
 
                     logger.info(f"发送{self.email_type}邮件到钉钉: {subject}")
                     # self.send_to_weixin(subject, sender, content, received_time)
-                    self.send_to_dingtalk(subject, sender, content, received_time)
+                    self.send_to_dingtalk(subject, sender, content, received_time, receiver)
                     
                     # 发送成功后将邮件标记为已读
                     self.imap.store(num, '+FLAGS', '\\Seen')

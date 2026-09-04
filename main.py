@@ -168,16 +168,39 @@ class EmailMonitor:
                 received_time = pytz.utc.localize(received_time)
             beijing_time = received_time.astimezone(beijing_tz)
             time_str = beijing_time.strftime("%Y-%m-%d %H:%M:%S")
-
-            text = f"📬 收件邮箱: {self.email_addr}\n⏰ 接收时间: {time_str}\n👤 发件人: {sender}\n📑 主题: {subject}\n\n📝 内容预览:\n{content}"
-
+    
+            # 判断是否包含验证码
+            if "[验证码]" in content:
+                code = content.replace("[验证码] ", "")
+                text = (
+                    f"🔐 验证码通知\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"📧 邮箱: {self.email_addr}\n"
+                    f"📬 发件人: {sender}\n"
+                    f"📋 主题: {subject}\n"
+                    f"🔑 验证码: {code}\n"
+                    f"⏰ 时间: {time_str}\n"
+                    f"━━━━━━━━━━━━━━━"
+                )
+            else:
+                text = (
+                    f"📧 新邮件通知\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"📧 邮箱: {self.email_addr}\n"
+                    f"📬 发件人: {sender}\n"
+                    f"📋 主题: {subject}\n"
+                    f"📝 内容: {content[:200]}\n"
+                    f"⏰ 时间: {time_str}\n"
+                    f"━━━━━━━━━━━━━━━"
+                )
+    
             timestamp = str(round(time.time() * 1000))
             sign_str = f"{timestamp}\n{self.dingtalk_secret}".encode()
             hmac_code = hmac.new(self.dingtalk_secret.encode(), sign_str, digestmod=hashlib.sha256).digest()
             sign = base64.b64encode(hmac_code).decode()
-
+    
             webhook_url = f"{self.dingtalk_webhook}&timestamp={timestamp}&sign={urllib.parse.quote_plus(sign)}"
-
+    
             payload = {
                 "msgtype": "text",
                 "text": {"content": text}
@@ -222,7 +245,92 @@ class EmailMonitor:
         except Exception as e:
             logger.error(f"{self.email_type}发送到微信时出错: {str(e)}")
 
+    def extract_verification_code(self, email_message):
+        """从邮件中提取验证码，支持多种格式"""
+        import re
+        
+        # 获取邮件的纯文本和HTML内容
+        text_content = ""
+        html_content = ""
+        
+        if email_message.is_multipart():
+            for part in email_message.walk():
+                content_type = part.get_content_type()
+                try:
+                    payload = part.get_payload(decode=True)
+                    if payload is None:
+                        continue
+                    charset = part.get_content_charset() or 'utf-8'
+                    decoded = payload.decode(charset, errors='replace')
+                    
+                    if content_type == "text/plain":
+                        text_content += decoded
+                    elif content_type == "text/html":
+                        html_content += decoded
+                except:
+                    continue
+        else:
+            try:
+                html_content = email_message.get_payload(decode=True).decode(errors='replace')
+            except:
+                return None
+        
+        # 优先从纯文本提取
+        content_to_search = text_content if text_content else html_content
+        
+        # 清理HTML标签（如果是HTML内容）
+        if not text_content and html_content:
+            clean = re.sub(r'<style[^>]*>.*?</style>', '', content_to_search, flags=re.DOTALL | re.IGNORECASE)
+            clean = re.sub(r'<script[^>]*>.*?</script>', '', clean, flags=re.DOTALL | re.IGNORECASE)
+            clean = re.sub(r'<[^>]+>', ' ', clean)
+            clean = re.sub(r'&nbsp;|&lt;|&gt;|&amp;|&quot;', ' ', clean)
+            clean = re.sub(r'\s+', ' ', clean).strip()
+        else:
+            clean = content_to_search
+        
+        # 验证码常见模式列表（按优先级排列）
+        patterns = [
+            # 模式1: verification code / 验证码 后面跟数字
+            r'(?:verification\s*code|验证码|code|login\s*code|auth\s*code|security\s*code)[:\s]*(\d{4,8})',
+            # 模式2: Your code is XXXXX
+            r'(?:your\s+code\s+is|code\s+is|your\s+verification\s+code\s+is)[:\s]*(\d{4,8})',
+            # 模式3: 单独一行或明显位置的6位数字
+            r'(?:^|\n)\s*(\d{6})\s*(?:\n|$)',
+            # 模式4: 大号字体显示的验证码（常见于HTML邮件）
+            r'font-size[^>]*>\s*(\d{4,8})\s*<',
+            # 模式5: 任何4-8位数字（兜底，但要过滤常见干扰项）
+            r'\b(\d{4,8})\b',
+        ]
+        
+        # 常见干扰数字（不是验证码的）
+        ignore_numbers = {
+            '2026', '0904', '1327', '0500', '0000', '1111', '1234', '4321',
+            '2025', '2024', '2023', '2022', '2021', '2020',
+            '1000', '2000', '3000', '5000', '9999',
+            '123456', '654321', '000000', '111111', '222222', '333333',
+            '444444', '555555', '666666', '777777', '888888', '999999'
+        }
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, clean, re.IGNORECASE)
+            for match in matches:
+                # 确保是纯数字且在合理范围
+                if match.isdigit() and len(match) >= 4 and len(match) <= 8:
+                    if match not in ignore_numbers:
+                        logger.info(f"从邮件中提取到验证码: {match}")
+                        return match
+        
+        return None
+        
     def get_email_content(self, email_message):
+        """获取邮件内容，优先提取验证码"""
+        import re
+        # 先尝试提取验证码
+        code = self.extract_verification_code(email_message)
+        if code:
+            return f"[验证码] {code}"
+
+        # 没有验证码则返回纯文本预览
         content = ""
         if email_message.is_multipart():
             for part in email_message.walk():
@@ -237,7 +345,11 @@ class EmailMonitor:
                 content = email_message.get_payload(decode=True).decode(errors='replace')
             except:
                 content = "无法解析邮件内容"
-        return content[:500]  # 限制内容长度
+
+        # 清理HTML标签
+        clean = re.sub(r'<[^>]+>', ' ', content)
+        clean = re.sub(r'\s+', ' ', clean).strip()
+        return clean[:500]  # 限制长度
 
     def check_emails(self):
         logger.info(f"开始检查{self.email_type}邮箱: {self.email_addr}")
